@@ -1,11 +1,18 @@
+---
+name: plan-terraform-workspace
+description: Plan a Terraform workspace via the TFE REST API. Use when a Terraform workspace needs a new plan. Supports plan-only (speculative) and plan-and-apply types. Validates workspace lock state, creates a plan run, and returns results including all changed resources.
+compatibility: Requires python3 and the requests package. Requires network access to Terraform Enterprise.
+metadata:
+  author: dso-ai
+  version: "1.0"
+---
+
 # Plan Terraform Workspace
 
-## Description
-This skill creates a Terraform plan on a workspace using the Terraform Enterprise (TFE) REST API. It validates the workspace state, triggers a plan run, and returns the result including all changed resources.
-
-Supports two plan types:
-- **plan-only** - Speculative plan, cannot be applied afterward
-- **plan-and-apply** - Standard run that can be applied later
+## When to use this skill
+Use this skill when you need to create a Terraform plan on a workspace. Supports two plan types:
+- **plan-only** — speculative plan, cannot be applied afterward
+- **plan-and-apply** — standard run that can be applied later
 
 ## Required Inputs
 

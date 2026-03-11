@@ -1,7 +1,16 @@
+---
+name: apply-terraform-run
+description: Apply a Terraform run via the TFE REST API. Use when a Terraform run is in planned state and needs to be applied. Validates run state, confirms plan-and-apply type, triggers apply, and polls for the final result.
+compatibility: Requires python3 and the requests package. Requires network access to Terraform Enterprise.
+metadata:
+  author: dso-ai
+  version: "1.0"
+---
+
 # Apply Terraform Run
 
-## Description
-This skill applies a Terraform run using the Terraform Enterprise (TFE) REST API. It validates the run state, confirms it is a plan-and-apply operation, triggers the apply, and polls for the final result.
+## When to use this skill
+Use this skill when a Terraform run exists in `planned` state and needs to be applied. The run must be a plan-and-apply type (not plan-only or destroy).
 
 ## Required Inputs
 
