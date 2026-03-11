@@ -15,47 +15,40 @@ Exit codes:
 """
 
 import argparse
-import json
 import os
 import sys
-import urllib.request
-import urllib.error
+
+import requests
 
 
 def apply_run(run_id: str, tfe_url: str, token: str, comment: str = None) -> bool:
     """Send apply action to Terraform Enterprise API."""
     url = f"{tfe_url}/api/v2/runs/{run_id}/actions/apply"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/vnd.api+json",
+    }
 
     payload = {}
     if comment:
         payload["comment"] = comment
 
-    data = json.dumps(payload).encode("utf-8") if payload else None
-
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Content-Type", "application/vnd.api+json")
-
     try:
-        with urllib.request.urlopen(req) as resp:
-            if resp.status == 202:
-                print(f"SUCCESS: Apply request for run {run_id} has been queued.")
-                return True
-            print(f"Unexpected response status: {resp.status}")
-            return False
-    except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        if e.code == 409:
+        resp = requests.post(url, headers=headers, json=payload if payload else None)
+        if resp.status_code == 202:
+            print(f"SUCCESS: Apply request for run {run_id} has been queued.")
+            return True
+        if resp.status_code == 409:
             print(
                 f"ERROR: Run {run_id} is not in a state that allows apply. "
-                f"The run must be in 'planned' state. Response: {body}",
+                f"The run must be in 'planned' state. Response: {resp.text}",
                 file=sys.stderr,
             )
         else:
-            print(f"ERROR: Failed to apply run {run_id}: HTTP {e.code} - {body}", file=sys.stderr)
+            print(f"ERROR: Failed to apply run {run_id}: HTTP {resp.status_code} - {resp.text}", file=sys.stderr)
         return False
-    except urllib.error.URLError as e:
-        print(f"ERROR: Could not connect to {tfe_url}: {e.reason}", file=sys.stderr)
+    except requests.exceptions.ConnectionError:
+        print(f"ERROR: Could not connect to {tfe_url}", file=sys.stderr)
         return False
 
 

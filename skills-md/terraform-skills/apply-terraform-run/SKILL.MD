@@ -23,7 +23,7 @@ export TFE_TOKEN="your-user-or-team-token"     # API token (org tokens NOT suppo
 Confirm the run is in `planned` state with no errors.
 
 ```bash
-python scripts/validate_run_state.py --run-id "$RUN_ID"
+python3 scripts/validate_run_state.py --run-id "$RUN_ID"
 ```
 
 **Validates:**
@@ -38,7 +38,7 @@ python scripts/validate_run_state.py --run-id "$RUN_ID"
 Confirm the run is a standard plan-and-apply operation (not plan-only or destroy).
 
 ```bash
-python scripts/validate_plan_and_apply.py --run-id "$RUN_ID"
+python3 scripts/validate_plan_and_apply.py --run-id "$RUN_ID"
 ```
 
 **Validates:**
@@ -53,7 +53,7 @@ python scripts/validate_plan_and_apply.py --run-id "$RUN_ID"
 Send the apply action to the TFE REST API.
 
 ```bash
-python scripts/apply_run.py --run-id "$RUN_ID" --comment "Applied via DSO AI agent"
+python3 scripts/apply_run.py --run-id "$RUN_ID" --comment "Applied via DSO AI agent"
 ```
 
 **API call:** `POST /api/v2/runs/{run_id}/actions/apply`
@@ -66,7 +66,7 @@ python scripts/apply_run.py --run-id "$RUN_ID" --comment "Applied via DSO AI age
 Poll the run status until it reaches a terminal state and report the outcome.
 
 ```bash
-python scripts/get_run_result.py --run-id "$RUN_ID" --poll-interval 10 --timeout 600
+python3 scripts/get_run_result.py --run-id "$RUN_ID" --poll-interval 10 --timeout 600
 ```
 
 **Polls until status is one of:** `applied`, `errored`, `discarded`, `canceled`, `force_canceled`

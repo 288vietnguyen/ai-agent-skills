@@ -19,8 +19,8 @@ import json
 import os
 import sys
 import time
-import urllib.request
-import urllib.error
+
+import requests
 
 # Terminal states where the run is no longer in progress
 TERMINAL_STATES = {"applied", "errored", "discarded", "canceled", "force_canceled"}
@@ -32,19 +32,20 @@ IN_PROGRESS_STATES = {"confirmed", "apply_queued", "applying"}
 def get_run(run_id: str, tfe_url: str, token: str) -> dict:
     """Fetch run details from Terraform Enterprise API."""
     url = f"{tfe_url}/api/v2/runs/{run_id}"
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Content-Type", "application/vnd.api+json")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/vnd.api+json",
+    }
 
     try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        print(f"ERROR: Failed to fetch run {run_id}: HTTP {e.code} - {body}", file=sys.stderr)
+        resp = requests.get(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.HTTPError:
+        print(f"ERROR: Failed to fetch run {run_id}: HTTP {resp.status_code} - {resp.text}", file=sys.stderr)
         sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"ERROR: Could not connect to {tfe_url}: {e.reason}", file=sys.stderr)
+    except requests.exceptions.ConnectionError:
+        print(f"ERROR: Could not connect to {tfe_url}", file=sys.stderr)
         sys.exit(1)
 
 
