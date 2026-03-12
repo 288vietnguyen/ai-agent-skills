@@ -60,9 +60,8 @@ python3 scripts/clone_workspace_repo.py --workspace-id "$WORKSPACE_ID" --clone-d
 
 **Actions:**
 1. Fetches workspace VCS config via `GET /api/v2/workspaces/{workspace_id}`
-2. Extracts repo identifier, branch, working directory, and SCM domain
-3. Auto-detects SCM domain from `display-identifier`, `identifier`, or `service-provider` field
-4. Clones the repository from the resolved URL
+2. Uses `repository-http-url` from `data.vcs-repo` as the clone URL
+3. Clones the repository to the specified directory
 
 **Output:** JSON with clone details:
 - `repo_identifier` — SCM repository (e.g., `org/repo`)

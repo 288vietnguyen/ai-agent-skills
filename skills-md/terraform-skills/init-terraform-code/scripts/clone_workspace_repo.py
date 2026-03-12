@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Retrieve VCS configuration from a Terraform workspace and clone the
-source code repository. The SCM domain is extracted from the VCS config
-(identifier or display-identifier field).
+source code repository using the repository-http-url from the VCS config.
 
 Environment variables:
     TFE_URL   - Terraform Enterprise URL (e.g., https://app.terraform.io)
@@ -57,54 +56,10 @@ def extract_vcs_info(workspace_data: dict) -> dict:
         "working_directory": attributes.get("working-directory", ""),
         "terraform_version": attributes.get("terraform-version", ""),
         "repo_identifier": vcs_repo.get("identifier", ""),
+        "repo_http_url": vcs_repo.get("repository-http-url", ""),
         "branch": vcs_repo.get("branch", ""),
         "oauth_token_id": vcs_repo.get("oauth-token-id", ""),
-        "display_identifier": vcs_repo.get("display-identifier", ""),
-        "service_provider": vcs_repo.get("service-provider", ""),
     }
-
-
-def parse_repo_url(vcs_info: dict) -> str:
-    """Build the clone URL from VCS config.
-
-    The VCS identifier may come in different formats:
-      - "org/repo"                          (no domain — needs service_provider or display_identifier)
-      - "github.com/org/repo"               (domain included)
-      - "gitlab.example.com/group/project"  (domain included)
-
-    The display-identifier often contains the domain prefix
-    (e.g., "gitlab.example.com/group/project").
-    """
-    display_id = vcs_info.get("display_identifier", "")
-    identifier = vcs_info.get("repo_identifier", "")
-
-    # Prefer display_identifier if it contains a domain (has 3+ parts)
-    if display_id and len(display_id.split("/")) > 2:
-        return f"https://{display_id}.git"
-
-    # If identifier itself contains a domain
-    if identifier and len(identifier.split("/")) > 2:
-        return f"https://{identifier}.git"
-
-    # Fallback: identifier is "org/repo", infer domain from service_provider
-    service_provider = vcs_info.get("service_provider", "")
-    domain_map = {
-        "github": "github.com",
-        "gitlab": "gitlab.com",
-        "bitbucket": "bitbucket.org",
-        "azure_devops": "dev.azure.com",
-    }
-    domain = domain_map.get(service_provider, "")
-
-    if domain and identifier:
-        return f"https://{domain}/{identifier}.git"
-
-    if identifier:
-        # Last resort: assume github.com
-        print(f"WARNING: Could not determine SCM domain, defaulting to github.com", file=sys.stderr)
-        return f"https://github.com/{identifier}.git"
-
-    return ""
 
 
 def clone_repo(repo_url: str, clone_dir: str, branch: str = "") -> bool:
@@ -147,15 +102,9 @@ def main():
     workspace_data = get_workspace(args.workspace_id, tfe_url, token)
     vcs_info = extract_vcs_info(workspace_data)
 
-    repo_identifier = vcs_info["repo_identifier"]
-    if not repo_identifier:
-        print("ERROR: Workspace has no VCS configuration. Cannot clone.", file=sys.stderr)
-        sys.exit(1)
-
-    # Build clone URL from VCS config
-    repo_url = parse_repo_url(vcs_info)
+    repo_url = vcs_info["repo_http_url"]
     if not repo_url:
-        print("ERROR: Could not determine repository URL from VCS config.", file=sys.stderr)
+        print("ERROR: Workspace VCS config has no repository-http-url. Cannot clone.", file=sys.stderr)
         sys.exit(1)
 
     # Clone the repository
@@ -164,7 +113,7 @@ def main():
 
     # Output clone details
     result = {
-        "repo_identifier": repo_identifier,
+        "repo_identifier": vcs_info["repo_identifier"],
         "repo_url": repo_url,
         "clone_dir": os.path.abspath(args.clone_dir),
         "working_dir": vcs_info["working_directory"],
