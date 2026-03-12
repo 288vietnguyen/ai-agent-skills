@@ -19,6 +19,7 @@ Set these before running the scripts:
 ```bash
 export TFE_URL="https://app.terraform.io"     # Terraform Enterprise base URL
 export TFE_TOKEN="your-user-or-team-token"     # API token (org tokens NOT supported)
+export SCM_DOMAIN="github.com"                 # SCM domain (e.g., github.com, gitlab.example.com)
 export AWS_REGION="ap-southeast-1"             # AWS region for S3 and Bedrock
 export STANDARDS_PREFIX="standards/"           # S3 key prefix for standards files
 export STANDARDS_FILES="structure.md,requirements.md,best_practices.md"  # Comma-separated .md files to fetch
@@ -52,16 +53,19 @@ python3 scripts/validate_clean_state.py --plan-result "$PLAN_RESULT_JSON"
 ---
 
 ### Step 2: Clone Workspace Repository
-Retrieve VCS configuration from the workspace and clone the source code repository.
+Retrieve VCS configuration from the workspace and clone the source code repository. The SCM domain is configured via the `SCM_DOMAIN` env var.
 
 ```bash
 python3 scripts/clone_workspace_repo.py --workspace-id "$WORKSPACE_ID" --clone-dir "./workspace-repo"
 ```
 
+**Configuration (env var):**
+- `SCM_DOMAIN` — SCM domain (default: `github.com`). Can be overridden via `--scm-domain` CLI argument.
+
 **Actions:**
 1. Fetches workspace VCS config via `GET /api/v2/workspaces/{workspace_id}`
 2. Extracts repo identifier, branch, and working directory
-3. Clones the repository to the specified directory
+3. Clones the repository from `https://<SCM_DOMAIN>/<repo_identifier>.git`
 
 **Output:** JSON with clone details:
 - `repo_identifier` — SCM repository (e.g., `org/repo`)

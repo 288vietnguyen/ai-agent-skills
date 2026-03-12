@@ -4,8 +4,9 @@ Retrieve VCS configuration from a Terraform workspace and clone the
 source code repository.
 
 Environment variables:
-    TFE_URL   - Terraform Enterprise URL (e.g., https://app.terraform.io)
-    TFE_TOKEN - Terraform Enterprise API token
+    TFE_URL    - Terraform Enterprise URL (e.g., https://app.terraform.io)
+    TFE_TOKEN  - Terraform Enterprise API token
+    SCM_DOMAIN - SCM domain (default: github.com, e.g., gitlab.example.com)
 
 Usage:
     python3 clone_workspace_repo.py --workspace-id <workspace_id> --clone-dir ./workspace-repo
@@ -62,11 +63,9 @@ def extract_vcs_info(workspace_data: dict) -> dict:
     }
 
 
-def clone_repo(repo_identifier: str, clone_dir: str, branch: str = "") -> bool:
+def clone_repo(repo_identifier: str, clone_dir: str, scm_domain: str, branch: str = "") -> bool:
     """Clone the repository to the specified directory."""
-    # Build clone URL — supports github.com by default
-    # For enterprise SCM, the agent should configure git credentials beforehand
-    repo_url = f"https://github.com/{repo_identifier}.git"
+    repo_url = f"https://{scm_domain}/{repo_identifier}.git"
 
     cmd = ["git", "clone", "--depth", "1"]
     if branch:
@@ -87,12 +86,14 @@ def main():
     parser = argparse.ArgumentParser(description="Clone Terraform workspace VCS repository")
     parser.add_argument("--workspace-id", required=True, help="Terraform workspace ID (e.g., ws-xxxxx)")
     parser.add_argument("--clone-dir", required=True, help="Directory to clone the repository into")
+    parser.add_argument("--scm-domain", default=None, help="SCM domain (overrides SCM_DOMAIN env var)")
     parser.add_argument("--tfe-url", default=None, help="TFE URL (overrides TFE_URL env var)")
     parser.add_argument("--token", default=None, help="TFE API token (overrides TFE_TOKEN env var)")
     args = parser.parse_args()
 
     tfe_url = args.tfe_url or os.environ.get("TFE_URL")
     token = args.token or os.environ.get("TFE_TOKEN")
+    scm_domain = args.scm_domain or os.environ.get("SCM_DOMAIN", "github.com")
 
     if not tfe_url:
         print("ERROR: TFE_URL env var or --tfe-url flag is required.", file=sys.stderr)
@@ -111,7 +112,7 @@ def main():
         sys.exit(1)
 
     # Clone the repository
-    if not clone_repo(repo_identifier, args.clone_dir, vcs_info["branch"]):
+    if not clone_repo(repo_identifier, args.clone_dir, scm_domain, vcs_info["branch"]):
         sys.exit(1)
 
     # Output clone details
