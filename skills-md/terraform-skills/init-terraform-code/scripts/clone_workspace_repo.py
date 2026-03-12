@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Retrieve VCS configuration from a Terraform workspace and clone the
-source code repository.
+source code repository. The SCM domain is extracted from the VCS config
+(identifier or display-identifier field).
 
 Environment variables:
-    TFE_URL    - Terraform Enterprise URL (e.g., https://app.terraform.io)
-    TFE_TOKEN  - Terraform Enterprise API token
-    SCM_DOMAIN - SCM domain (default: github.com, e.g., gitlab.example.com)
+    TFE_URL   - Terraform Enterprise URL (e.g., https://app.terraform.io)
+    TFE_TOKEN - Terraform Enterprise API token
 
 Usage:
     python3 clone_workspace_repo.py --workspace-id <workspace_id> --clone-dir ./workspace-repo
@@ -60,24 +60,55 @@ def extract_vcs_info(workspace_data: dict) -> dict:
         "branch": vcs_repo.get("branch", ""),
         "oauth_token_id": vcs_repo.get("oauth-token-id", ""),
         "display_identifier": vcs_repo.get("display-identifier", ""),
+        "service_provider": vcs_repo.get("service-provider", ""),
     }
 
 
-def normalize_repo_identifier(repo_identifier: str) -> str:
-    """Strip any domain prefix from repo identifier, returning only org/repo."""
-    # Handle identifiers like "github.com/org/repo" or "gitlab.example.com/org/repo"
-    parts = repo_identifier.split("/")
-    if len(parts) > 2:
-        # Assume first part(s) are domain, last two are org/repo
-        return "/".join(parts[-2:])
-    return repo_identifier
+def parse_repo_url(vcs_info: dict) -> str:
+    """Build the clone URL from VCS config.
+
+    The VCS identifier may come in different formats:
+      - "org/repo"                          (no domain — needs service_provider or display_identifier)
+      - "github.com/org/repo"               (domain included)
+      - "gitlab.example.com/group/project"  (domain included)
+
+    The display-identifier often contains the domain prefix
+    (e.g., "gitlab.example.com/group/project").
+    """
+    display_id = vcs_info.get("display_identifier", "")
+    identifier = vcs_info.get("repo_identifier", "")
+
+    # Prefer display_identifier if it contains a domain (has 3+ parts)
+    if display_id and len(display_id.split("/")) > 2:
+        return f"https://{display_id}.git"
+
+    # If identifier itself contains a domain
+    if identifier and len(identifier.split("/")) > 2:
+        return f"https://{identifier}.git"
+
+    # Fallback: identifier is "org/repo", infer domain from service_provider
+    service_provider = vcs_info.get("service_provider", "")
+    domain_map = {
+        "github": "github.com",
+        "gitlab": "gitlab.com",
+        "bitbucket": "bitbucket.org",
+        "azure_devops": "dev.azure.com",
+    }
+    domain = domain_map.get(service_provider, "")
+
+    if domain and identifier:
+        return f"https://{domain}/{identifier}.git"
+
+    if identifier:
+        # Last resort: assume github.com
+        print(f"WARNING: Could not determine SCM domain, defaulting to github.com", file=sys.stderr)
+        return f"https://github.com/{identifier}.git"
+
+    return ""
 
 
-def clone_repo(repo_identifier: str, clone_dir: str, scm_domain: str, branch: str = "") -> bool:
+def clone_repo(repo_url: str, clone_dir: str, branch: str = "") -> bool:
     """Clone the repository to the specified directory."""
-    clean_identifier = normalize_repo_identifier(repo_identifier)
-    repo_url = f"https://{scm_domain}/{clean_identifier}.git"
-
     cmd = ["git", "clone", "--depth", "1"]
     if branch:
         cmd.extend(["--branch", branch])
@@ -85,8 +116,6 @@ def clone_repo(repo_identifier: str, clone_dir: str, scm_domain: str, branch: st
 
     try:
         print(f"Cloning from: {repo_url}")
-        print(f"  SCM domain: {scm_domain}")
-        print(f"  Repository: {clean_identifier}")
         print(f"  Into: {clone_dir}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         print(f"Clone successful.")
@@ -100,14 +129,12 @@ def main():
     parser = argparse.ArgumentParser(description="Clone Terraform workspace VCS repository")
     parser.add_argument("--workspace-id", required=True, help="Terraform workspace ID (e.g., ws-xxxxx)")
     parser.add_argument("--clone-dir", required=True, help="Directory to clone the repository into")
-    parser.add_argument("--scm-domain", default=None, help="SCM domain (overrides SCM_DOMAIN env var)")
     parser.add_argument("--tfe-url", default=None, help="TFE URL (overrides TFE_URL env var)")
     parser.add_argument("--token", default=None, help="TFE API token (overrides TFE_TOKEN env var)")
     args = parser.parse_args()
 
     tfe_url = args.tfe_url or os.environ.get("TFE_URL")
     token = args.token or os.environ.get("TFE_TOKEN")
-    scm_domain = args.scm_domain or os.environ.get("SCM_DOMAIN", "github.com")
 
     if not tfe_url:
         print("ERROR: TFE_URL env var or --tfe-url flag is required.", file=sys.stderr)
@@ -125,13 +152,20 @@ def main():
         print("ERROR: Workspace has no VCS configuration. Cannot clone.", file=sys.stderr)
         sys.exit(1)
 
+    # Build clone URL from VCS config
+    repo_url = parse_repo_url(vcs_info)
+    if not repo_url:
+        print("ERROR: Could not determine repository URL from VCS config.", file=sys.stderr)
+        sys.exit(1)
+
     # Clone the repository
-    if not clone_repo(repo_identifier, args.clone_dir, scm_domain, vcs_info["branch"]):
+    if not clone_repo(repo_url, args.clone_dir, vcs_info["branch"]):
         sys.exit(1)
 
     # Output clone details
     result = {
         "repo_identifier": repo_identifier,
+        "repo_url": repo_url,
         "clone_dir": os.path.abspath(args.clone_dir),
         "working_dir": vcs_info["working_directory"],
         "default_branch": vcs_info["branch"],
