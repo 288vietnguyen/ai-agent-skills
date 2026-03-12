@@ -63,9 +63,20 @@ def extract_vcs_info(workspace_data: dict) -> dict:
     }
 
 
+def normalize_repo_identifier(repo_identifier: str) -> str:
+    """Strip any domain prefix from repo identifier, returning only org/repo."""
+    # Handle identifiers like "github.com/org/repo" or "gitlab.example.com/org/repo"
+    parts = repo_identifier.split("/")
+    if len(parts) > 2:
+        # Assume first part(s) are domain, last two are org/repo
+        return "/".join(parts[-2:])
+    return repo_identifier
+
+
 def clone_repo(repo_identifier: str, clone_dir: str, scm_domain: str, branch: str = "") -> bool:
     """Clone the repository to the specified directory."""
-    repo_url = f"https://{scm_domain}/{repo_identifier}.git"
+    clean_identifier = normalize_repo_identifier(repo_identifier)
+    repo_url = f"https://{scm_domain}/{clean_identifier}.git"
 
     cmd = ["git", "clone", "--depth", "1"]
     if branch:
@@ -73,7 +84,10 @@ def clone_repo(repo_identifier: str, clone_dir: str, scm_domain: str, branch: st
     cmd.extend([repo_url, clone_dir])
 
     try:
-        print(f"Cloning {repo_identifier} into {clone_dir}...")
+        print(f"Cloning from: {repo_url}")
+        print(f"  SCM domain: {scm_domain}")
+        print(f"  Repository: {clean_identifier}")
+        print(f"  Into: {clone_dir}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         print(f"Clone successful.")
         return True
