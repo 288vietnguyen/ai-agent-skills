@@ -98,7 +98,7 @@ Both can be overridden via `--prefix` and `--files` CLI arguments.
 ---
 
 ### Step 4: Generate Terraform Code via Amazon Bedrock
-Send a prompt to Amazon Bedrock (Claude Opus 4.6) with full context — change request, organizational standards, and existing workspace code — to generate compliant Terraform code.
+Send a prompt to Amazon Bedrock (Claude Opus 4.6) with full context to generate compliant Terraform code. The script auto-detects whether this is a **CREATE** or **MODIFY** request.
 
 ```bash
 python3 scripts/generate_terraform_code.py \
@@ -108,18 +108,50 @@ python3 scripts/generate_terraform_code.py \
   --output-dir "./generated"
 ```
 
+**Two modes:**
+
+- **CREATE mode** — Triggered when the change request contains creation keywords (`create`, `add`, `new`, `provision`, `deploy`, `setup`, `set up`, `init`) **and** a known resource type keyword (e.g., `s3`). The prompt includes resource templates from the `assets/terraform-template/` folder as reference patterns.
+- **MODIFY mode** — When no new resource creation is detected. The prompt includes only existing workspace code and standards.
+
+**Resource template structure** (`assets/terraform-template/`):
+```
+assets/terraform-template/
+├── module-nonprod/
+│   └── s3/                    # S3 module template
+│       ├── main.tf
+│       ├── variables.tf
+│       ├── outputs.tf
+│       ├── data.tf
+│       └── context.tf
+└── regions/
+    └── region-code/
+        └── environment/       # Environment-level template
+            ├── locals.tf
+            ├── main.tf
+            ├── provider.tf
+            └── data.tf
+```
+
 **Prompt sent to Bedrock includes:**
 - **Change request** — what needs to be implemented
-- **All standards `.md` files** — fetched from S3 in Step 3 (e.g., structure, requirements, best practices)
+- **All standards `.md` files** — fetched from S3 in Step 3
+- **Resource templates** (CREATE mode only) — matching templates from assets folder
 - **Existing code** — all `.tf` files from the cloned workspace for context
 
 **Actions:**
 1. Loads all `.md` standard files from Step 3 output directory
 2. Reads all existing `.tf` files from the cloned workspace (Step 2)
-3. Builds a structured prompt with all context
-4. Invokes Amazon Bedrock `claude-opus-4-6` to generate Terraform code
-5. Parses the response into individual `.tf` files
-6. Validates generated files against the required structure
+3. Detects resource types from the change request keywords
+4. Loads matching templates from `assets/terraform-template/` (CREATE mode)
+5. Builds a structured prompt with all context
+6. Invokes Amazon Bedrock `claude-opus-4-6` to generate Terraform code
+7. Parses the response into individual `.tf` files
+8. Validates generated files against the required structure
+
+**Optional arguments:**
+- `--assets-dir` — Override default assets/terraform-template path
+- `--model-id` — Override Bedrock model ID
+- `--region` — Override AWS region
 
 **Model:** `us.anthropic.claude-opus-4-6-20250610` (configurable via `--model-id` or `BEDROCK_MODEL_ID` env var)
 

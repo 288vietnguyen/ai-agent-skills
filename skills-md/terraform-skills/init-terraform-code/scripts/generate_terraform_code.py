@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
 Generate Terraform code by sending a prompt to Amazon Bedrock (Claude Opus 4.6).
-The prompt includes the change request, organizational standards, existing
-workspace code, and structural template so the model produces compliant
-Terraform files.
+
+Two modes:
+  - CREATE: When the change request involves creating new resources, the prompt
+    includes resource templates from the assets folder as reference.
+  - MODIFY: When modifying existing config, the prompt includes only the
+    existing workspace code and standards.
 
 Environment variables:
-    AWS_REGION            - AWS region for Bedrock (default: us-east-1)
+    AWS_REGION            - AWS region for Bedrock (default: ap-southeast-1)
     AWS_ACCESS_KEY_ID     - AWS access key (or use IAM role)
     AWS_SECRET_ACCESS_KEY - AWS secret key (or use IAM role)
     BEDROCK_MODEL_ID      - Bedrock model ID (default: us.anthropic.claude-opus-4-6-20250610)
@@ -34,6 +37,15 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 DEFAULT_MODEL_ID = "us.anthropic.claude-opus-4-6-20250610"
 MAX_TOKENS = 16384
+
+# Resolve assets directory relative to this script
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "assets", "terraform-template")
+
+# Map of resource keywords to their template subdirectory under module-nonprod/
+RESOURCE_TEMPLATE_MAP = {
+    "s3": "s3",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -81,42 +93,111 @@ def read_existing_code(workspace_dir: str) -> dict[str, str]:
     return existing_files
 
 
+def read_tf_dir(directory: str) -> dict[str, str]:
+    """Read all .tf files from a directory."""
+    files = {}
+    if not os.path.isdir(directory):
+        return files
+    for filename in sorted(os.listdir(directory)):
+        if not filename.endswith(".tf"):
+            continue
+        filepath = os.path.join(directory, filename)
+        with open(filepath) as f:
+            files[filename] = f.read()
+    return files
+
+
+def detect_resource_types(change_request: str) -> list[str]:
+    """Detect which resource types are requested for creation."""
+    cr_lower = change_request.lower()
+
+    # Only match if the request is about creating new resources
+    create_keywords = ["create", "add", "new", "provision", "deploy", "setup", "set up", "init"]
+    is_create = any(kw in cr_lower for kw in create_keywords)
+
+    if not is_create:
+        return []
+
+    matched = []
+    for keyword, template_dir in RESOURCE_TEMPLATE_MAP.items():
+        if keyword in cr_lower:
+            matched.append(template_dir)
+
+    return matched
+
+
+def load_templates(resource_types: list[str]) -> dict[str, dict[str, str]]:
+    """Load template files for the given resource types from assets."""
+    templates = {}
+
+    # Load module templates
+    for resource_type in resource_types:
+        module_dir = os.path.join(ASSETS_DIR, "module-nonprod", resource_type)
+        if os.path.isdir(module_dir):
+            files = read_tf_dir(module_dir)
+            if files:
+                templates[f"module-nonprod/{resource_type}"] = files
+                print(f"  Loaded module template: module-nonprod/{resource_type}/ ({len(files)} files)")
+
+    # Load environment template (always include when creating new resources)
+    env_dir = os.path.join(ASSETS_DIR, "regions", "region-code", "environment")
+    if os.path.isdir(env_dir):
+        files = read_tf_dir(env_dir)
+        if files:
+            templates["regions/region-code/environment"] = files
+            print(f"  Loaded environment template: regions/region-code/environment/ ({len(files)} files)")
+
+    return templates
+
+
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are a Terraform code generator. You produce production-ready Terraform \
+You are a Senior DevSecOps Engineer and AWS Engineer. You produce production-ready Terraform \
 code that strictly follows organizational standards and best practices.
 
 Rules:
-- Output ONLY Terraform code blocks. No explanations outside code blocks.
+- Output ONLY Terraform code change blocks.
+- No explanations outside code blocks.
 - Each file must be wrapped in a fenced code block with the filename as label:
-  ```hcl filename="main.tf"
+  ```hcl filename="path/to/file.tf"
   ... code ...
   ```
+- DO NOT CHANGE the current setting: module, module's version, provider.tf
 - Generate all required files defined in the structure standard.
-- Follow the naming conventions, tagging requirements, and best practices exactly.
+- Follow the naming conventions, tagging requirements and folder structure.
 - If existing code is provided, extend it without breaking current resources.
-- Use variables for all configurable values.
-- Include meaningful descriptions on all variables and outputs.
+- When templates are provided, follow the same pattern and structure exactly.
 """
 
 
-def build_prompt(change_request: str, standards: dict[str, str], existing_files: dict[str, str]) -> str:
+def build_prompt(change_request: str, standards: dict[str, str],
+                 existing_files: dict[str, str],
+                 templates: dict[str, dict[str, str]]) -> str:
     """Build the user prompt with all context for Bedrock."""
     sections = []
 
     # Change request
     sections.append(f"## Change Request\n{change_request}")
 
-    # Standards — include all .md files from the standards directory
+    # Standards
     if standards:
         for filename, content in standards.items():
             label = filename.replace(".md", "").replace("_", " ").title()
             sections.append(f"## Standard: {label} ({filename})\n{content}")
     else:
         sections.append("## Standards\nNo standards provided.")
+
+    # Templates (for new resource creation)
+    if templates:
+        for template_path, files in templates.items():
+            template_section = f"## Resource Template: {template_path}/\n"
+            template_section += "Use this template as the reference structure. Follow the same pattern exactly.\n\n"
+            for filename, content in files.items():
+                template_section += f"```hcl filename=\"{template_path}/{filename}\"\n{content}\n```\n\n"
+            sections.append(template_section)
 
     # Existing code
     if existing_files:
@@ -127,13 +208,23 @@ def build_prompt(change_request: str, standards: dict[str, str], existing_files:
     else:
         sections.append("## Existing Workspace Code\nNo existing code. This is a new workspace.")
 
-    # Instruction
-    sections.append(
-        "## Instructions\n"
-        "Generate all required Terraform files for the change request above.\n"
-        "Each file must be in a separate fenced code block with `filename=\"<name>\"` label.\n"
-        "Follow the structure, requirements, and best practices exactly."
-    )
+    # Instructions
+    if templates:
+        sections.append(
+            "## Instructions\n"
+            "This is a CREATE request. Generate Terraform code for the new resource(s).\n"
+            "Follow the resource templates provided above as the exact pattern.\n"
+            "Generate both the module files and the environment-level files that call the module.\n"
+            "Each file must be in a separate fenced code block with `filename=\"path/to/file.tf\"` label.\n"
+            "Preserve the folder structure from the templates."
+        )
+    else:
+        sections.append(
+            "## Instructions\n"
+            "This is a MODIFY request. Update the existing Terraform code for the change request.\n"
+            "Each file must be in a separate fenced code block with `filename=\"<name>\"` label.\n"
+            "Only output files that need to be changed or created."
+        )
 
     return "\n\n".join(sections)
 
@@ -222,8 +313,9 @@ def write_files(files: dict[str, str], output_dir: str):
     os.makedirs(output_dir, exist_ok=True)
     for filename, content in files.items():
         filepath = os.path.join(output_dir, filename)
-        # Create subdirectories if filename contains path separators
-        os.makedirs(os.path.dirname(filepath), exist_ok=True) if os.path.dirname(filepath) else None
+        dirpath = os.path.dirname(filepath)
+        if dirpath:
+            os.makedirs(dirpath, exist_ok=True)
         with open(filepath, "w") as f:
             f.write(content)
         print(f"  Written: {filename}")
@@ -233,10 +325,13 @@ def validate_structure(output_dir: str) -> bool:
     """Validate generated code contains essential Terraform files."""
     required_files = ["main.tf", "variables.tf", "outputs.tf", "providers.tf", "versions.tf"]
 
-    missing = []
-    for filename in required_files:
-        if not os.path.exists(os.path.join(output_dir, filename)):
-            missing.append(filename)
+    # Check in output_dir and any subdirectories
+    all_files = set()
+    for _, _, filenames in os.walk(output_dir):
+        for f in filenames:
+            all_files.add(f)
+
+    missing = [f for f in required_files if f not in all_files]
 
     if missing:
         print(f"WARNING: Generated code is missing files: {', '.join(missing)}", file=sys.stderr)
@@ -256,12 +351,17 @@ def main():
     parser.add_argument("--standards-dir", required=True, help="Directory containing fetched standards files")
     parser.add_argument("--workspace-dir", default="", help="Directory with existing workspace Terraform code")
     parser.add_argument("--output-dir", required=True, help="Directory to write generated Terraform files")
+    parser.add_argument("--assets-dir", default=None, help="Path to assets/terraform-template directory (overrides default)")
     parser.add_argument("--region", default=None, help="AWS region for Bedrock (overrides AWS_REGION)")
     parser.add_argument("--model-id", default=None, help="Bedrock model ID (overrides BEDROCK_MODEL_ID)")
     args = parser.parse_args()
 
     region = args.region or os.environ.get("AWS_REGION", "ap-southeast-1")
     model_id = args.model_id or os.environ.get("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID)
+
+    global ASSETS_DIR
+    if args.assets_dir:
+        ASSETS_DIR = args.assets_dir
 
     # 1. Load context
     print("Loading organizational standards...")
@@ -270,16 +370,30 @@ def main():
     print("\nReading existing workspace code...")
     existing_files = read_existing_code(args.workspace_dir)
 
-    # 2. Build prompt
+    # 2. Detect request type and load templates if creating new resources
+    print("\nDetecting request type...")
+    resource_types = detect_resource_types(args.change_request)
+
+    templates = {}
+    if resource_types:
+        print(f"  CREATE mode — detected resource types: {', '.join(resource_types)}")
+        print("\nLoading resource templates from assets...")
+        templates = load_templates(resource_types)
+        if not templates:
+            print("  WARNING: No matching templates found in assets. Proceeding without templates.", file=sys.stderr)
+    else:
+        print("  MODIFY mode — no new resource types detected, using existing code context only.")
+
+    # 3. Build prompt
     print("\nBuilding prompt...")
-    prompt = build_prompt(args.change_request, standards, existing_files)
+    prompt = build_prompt(args.change_request, standards, existing_files, templates)
     print(f"  Prompt length: {len(prompt)} characters")
 
-    # 3. Call Bedrock
+    # 4. Call Bedrock
     print("\nInvoking Amazon Bedrock...")
     response_text = invoke_bedrock(prompt, region, model_id)
 
-    # 4. Parse response into files
+    # 5. Parse response into files
     print("\nParsing generated code...")
     generated_files = parse_response(response_text)
 
@@ -291,11 +405,11 @@ def main():
 
     print(f"  Parsed {len(generated_files)} file(s): {', '.join(generated_files.keys())}")
 
-    # 5. Write files
+    # 6. Write files
     print(f"\nWriting generated files to '{args.output_dir}'...")
     write_files(generated_files, args.output_dir)
 
-    # 6. Validate structure
+    # 7. Validate structure
     print("\nValidating generated structure...")
     validate_structure(args.output_dir)
 
