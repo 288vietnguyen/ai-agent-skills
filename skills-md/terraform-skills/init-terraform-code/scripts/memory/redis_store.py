@@ -10,10 +10,11 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
-import redis
+from redis.cluster import RedisCluster
 from redis.commands.search.field import TextField, VectorField
 from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
+from redis.exceptions import ResponseError
 
 from memory.embeddings import EMBEDDING_DIMENSIONS
 from memory.models import ExecutionContext
@@ -27,16 +28,24 @@ class RedisMemoryStore:
     """Store and retrieve execution contexts in Amazon MemoryDB with vector search."""
 
     def __init__(self, host: str, port: int = 6379, ssl: bool = True,
+                 username: str = "", password: str = "",
                  index_name: str = INDEX_NAME, ttl_days: int = DEFAULT_TTL_DAYS):
         self.index_name = index_name
         self.ttl_days = ttl_days
 
-        self.client = redis.Redis(
-            host=host,
-            port=port,
-            ssl=ssl,
-            decode_responses=False,  # VSS needs bytes for vectors
-        )
+        kwargs = {
+            "host": host,
+            "port": port,
+            "ssl": ssl,
+            "ssl_cert_reqs": None,
+            "decode_responses": False,  # VSS needs bytes for vectors
+        }
+        if username:
+            kwargs["username"] = username
+        if password:
+            kwargs["password"] = password
+
+        self.client = RedisCluster(**kwargs)
 
         self._ensure_index()
 
@@ -44,7 +53,7 @@ class RedisMemoryStore:
         """Create the vector search index if it does not exist."""
         try:
             self.client.ft(self.index_name).info()
-        except redis.exceptions.ResponseError:
+        except ResponseError:
             # Index does not exist — create it
             schema = (
                 VectorField(

@@ -23,7 +23,7 @@ Environment variables:
     MEMORYDB_PORT         - MemoryDB port (default: 6379)
     MEMORY_SIMILARITY_THRESHOLD - Cosine similarity threshold (default: 0.85)
     MEMORY_TTL_DAYS       - Days to keep cached contexts (default: 90)
-    EMBEDDING_MODEL_ID    - Bedrock embedding model (default: amazon.titan-embed-text-v2:0)
+    EMBEDDING_MODEL_ID    - Bedrock embedding model (default: cohere.embed-v4:0)
 
 Usage:
     python3 generate_terraform_code.py \
@@ -366,9 +366,11 @@ def _init_memory(region: str):
         return None
 
     redis_port = int(os.environ.get("MEMORYDB_PORT", "6379"))
+    redis_username = os.environ.get("MEMORYDB_USERNAME", "")
+    redis_password = os.environ.get("MEMORYDB_PASSWORD", "")
     threshold = float(os.environ.get("MEMORY_SIMILARITY_THRESHOLD", "0.85"))
     ttl_days = int(os.environ.get("MEMORY_TTL_DAYS", "90"))
-    embedding_model = os.environ.get("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
+    embedding_model = os.environ.get("EMBEDDING_MODEL_ID", "cohere.embed-v4:0")
 
     try:
         from memory.embeddings import BedrockEmbeddings
@@ -376,7 +378,11 @@ def _init_memory(region: str):
         from memory.manager import MemoryManager
 
         embeddings = BedrockEmbeddings(region=region, model_id=embedding_model)
-        store = RedisMemoryStore(host=redis_host, port=redis_port, ttl_days=ttl_days)
+        store = RedisMemoryStore(
+            host=redis_host, port=redis_port,
+            username=redis_username, password=redis_password,
+            ttl_days=ttl_days,
+        )
         manager = MemoryManager(embeddings=embeddings, store=store, threshold=threshold)
         print(f"  Memory enabled: {redis_host}:{redis_port}")
         return manager

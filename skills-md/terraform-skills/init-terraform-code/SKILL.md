@@ -30,9 +30,11 @@ export BEDROCK_MODEL_ID="us.anthropic.claude-opus-4-6-20250610"  # (optional) Be
 # Amazon MemoryDB (optional — enables memory/caching)
 export MEMORYDB_HOST="clustercfg.xxx.memorydb.ap-southeast-1.amazonaws.com"
 export MEMORYDB_PORT="6379"                    # Default Redis port
+export MEMORYDB_USERNAME="default"             # MemoryDB ACL username
+export MEMORYDB_PASSWORD="your-password"       # MemoryDB ACL password
 export MEMORY_SIMILARITY_THRESHOLD="0.85"      # Cosine similarity threshold (0-1)
 export MEMORY_TTL_DAYS="90"                    # Days to keep cached contexts
-export EMBEDDING_MODEL_ID="amazon.titan-embed-text-v2:0"  # Embedding model for VSS
+export EMBEDDING_MODEL_ID="cohere.embed-v4:0"  # Embedding model for VSS
 ```
 
 ### Script Arguments
@@ -223,7 +225,7 @@ python3 scripts/push_to_scm.py \
 ---
 
 ### Step 6: Store Execution in Memory (Automatic)
-After a successful generation (Step 4), the execution context is automatically stored in MemoryDB if `MEMORYDB_HOST` is configured. This includes all workspace metadata, standards, templates, generated code, and the change request embedding. Future similar requests will find this entry via vector search and skip Steps 1-3.
+After a successful generation (Step 4), the execution context is automatically stored in MemoryDB if `MEMORYDB_HOST` is configured. This includes workspace metadata, VCS URL, standards, generated code, and the change request embedding. Future similar requests will find this entry via vector search and skip Steps 1-3.
 
 This step requires no manual action — it runs automatically at the end of `generate_terraform_code.py`.
 

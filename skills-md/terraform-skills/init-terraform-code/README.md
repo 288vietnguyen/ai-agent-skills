@@ -85,7 +85,7 @@ MEMORYDB_HOST="clustercfg.xxx.memorydb.ap-southeast-1.amazonaws.com"
 MEMORYDB_PORT="6379"
 MEMORY_SIMILARITY_THRESHOLD="0.85"
 MEMORY_TTL_DAYS="90"
-EMBEDDING_MODEL_ID="amazon.titan-embed-text-v2:0"
+EMBEDDING_MODEL_ID="cohere.embed-v4:0"
 ```
 
 ### Project Structure

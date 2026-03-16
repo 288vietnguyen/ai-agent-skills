@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bedrock Titan Embed Text V2 wrapper for generating embeddings."""
+"""Bedrock Cohere Embed V4 wrapper for generating embeddings."""
 
 import json
 import sys
@@ -7,12 +7,12 @@ import sys
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
-DEFAULT_EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
+DEFAULT_EMBEDDING_MODEL = "cohere.embed-v4:0"
 EMBEDDING_DIMENSIONS = 1024
 
 
 class BedrockEmbeddings:
-    """Generate text embeddings using Amazon Bedrock Titan Embed Text V2."""
+    """Generate text embeddings using Amazon Bedrock Cohere Embed V4."""
 
     def __init__(self, region: str, model_id: str = DEFAULT_EMBEDDING_MODEL):
         self.model_id = model_id
@@ -27,14 +27,15 @@ class BedrockEmbeddings:
         """Embed a single text string into a vector.
 
         Args:
-            text: The text to embed (max 8192 tokens for Titan V2).
+            text: The text to embed.
 
         Returns:
             A list of floats representing the embedding vector (1024 dimensions).
         """
         body = json.dumps({
-            "inputText": text,
-            "dimensions": self.dimensions,
+            "texts": [text],
+            "input_type": "search_document",
+            "embedding_types": ["float"],
         })
 
         try:
@@ -45,7 +46,7 @@ class BedrockEmbeddings:
                 body=body,
             )
             result = json.loads(response["body"].read())
-            return result["embedding"]
+            return result["embeddings"]["float"][0]
 
         except ClientError as e:
             print(f"ERROR: Bedrock embedding failed: {e}", file=sys.stderr)
