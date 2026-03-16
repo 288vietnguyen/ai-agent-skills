@@ -1,28 +1,38 @@
 ---
 name: init-terraform-code
-description: Initialize new Terraform change request code. Validates workspace is clean using plan-terraform-workspace output, clones the workspace repo, fetches coding standards from S3, sends a prompt to Amazon Bedrock (Claude Opus 4.6) with all context to generate compliant Terraform code, then commits and pushes to SCM.
-compatibility: Requires python3, requests, boto3, and git. Requires network access to Terraform Enterprise, AWS S3, Amazon Bedrock, and SCM (e.g., GitHub, GitLab).
+description: Initialize new Terraform change request code. Uses Amazon MemoryDB (Redis VSS) to check for similar past executions — on a cache hit, skips validation/clone/fetch and reuses cached context. Otherwise runs the full flow: validates workspace, clones repo, fetches standards from S3, generates code via Bedrock (Claude Opus 4.6), pushes to SCM, and stores the execution in memory for future reuse.
+compatibility: Requires python3, requests, boto3, redis, and git. Requires network access to Terraform Enterprise, AWS S3, Amazon Bedrock, Amazon MemoryDB, and SCM (e.g., GitHub, GitLab).
 metadata:
   author: dso-ai
-  version: "2.0"
+  version: "3.0"
 ---
 
 # Init Terraform Code
 
 ## When to use this skill
-Use this skill when you need to initialize new Terraform code for a change request. This skill ensures the workspace is in a clean state, fetches organizational standards, generates compliant code, and pushes it to the workspace SCM repository.
+Use this skill when you need to initialize new Terraform code for a change request. The skill first checks MemoryDB for similar past executions — if found, it skips Steps 1-3 and reuses cached context. Otherwise it runs the full flow: validates the workspace, fetches standards, generates code, and pushes to SCM. After each successful run, the execution context is stored in MemoryDB for future reuse.
 
 ## Required Inputs
 
 ### Environment Variables
 Set these before running the scripts:
 ```bash
+# Terraform Enterprise
 export TFE_URL="https://app.terraform.io"     # Terraform Enterprise base URL
 export TFE_TOKEN="your-user-or-team-token"     # API token (org tokens NOT supported)
+
+# AWS (S3 + Bedrock)
 export AWS_REGION="ap-southeast-1"             # AWS region for S3 and Bedrock
 export STANDARDS_PREFIX="standards/"           # S3 key prefix for standards files
 export STANDARDS_FILES="structure.md,requirements.md,best_practices.md"  # Comma-separated .md files to fetch
 export BEDROCK_MODEL_ID="us.anthropic.claude-opus-4-6-20250610"  # (optional) Bedrock model override
+
+# Amazon MemoryDB (optional — enables memory/caching)
+export MEMORYDB_HOST="clustercfg.xxx.memorydb.ap-southeast-1.amazonaws.com"
+export MEMORYDB_PORT="6379"                    # Default Redis port
+export MEMORY_SIMILARITY_THRESHOLD="0.85"      # Cosine similarity threshold (0-1)
+export MEMORY_TTL_DAYS="90"                    # Days to keep cached contexts
+export EMBEDDING_MODEL_ID="amazon.titan-embed-text-v2:0"  # Embedding model for VSS
 ```
 
 ### Script Arguments
@@ -35,6 +45,27 @@ export BEDROCK_MODEL_ID="us.anthropic.claude-opus-4-6-20250610"  # (optional) Be
 - `--token` (optional) - Overrides `TFE_TOKEN` env var
 
 ## Flow
+
+### Step 0: Memory Lookup (Optional)
+When `MEMORYDB_HOST` is configured, the script embeds the change request using Amazon Bedrock Titan Embed Text V2 and searches MemoryDB (Redis VSS) for similar past executions.
+
+- **CACHE HIT** (cosine similarity > `MEMORY_SIMILARITY_THRESHOLD`): Steps 1-3 are skipped. Cached standards, VCS URL, and templates are reused. Existing workspace code is always read fresh (it may change outside AI). Execution jumps directly to Step 4 (code generation).
+- **CACHE MISS**: The full flow (Steps 1-5) runs as normal.
+- **Memory unavailable**: If MemoryDB is unreachable or `MEMORYDB_HOST` is not set, the full flow runs with no errors (graceful degradation).
+
+**Data stored per execution** (after Step 5):
+- Change request text + embedding vector (1024-dim)
+- Workspace metadata: ID, name, VCS URL, branch, working directory
+- Standards content (all `.md` files)
+- Templates used for code generation
+- Generated Terraform code output
+- Execution mode (CREATE/MODIFY) and resource types
+- Steps executed and timestamp
+- TTL (default: 90 days, configurable via `MEMORY_TTL_DAYS`)
+
+**Not stored:** Existing workspace code — always read fresh from the repo since it can be modified outside the AI flow.
+
+---
 
 ### Step 1: Validate Clean State
 Verify the workspace is clean using the output from the `plan-terraform-workspace` skill. The plan result must show 0 resource changes (no drift).
@@ -105,7 +136,11 @@ python3 scripts/generate_terraform_code.py \
   --change-request "$CHANGE_REQUEST" \
   --standards-dir "./standards" \
   --workspace-dir "./workspace-repo/$WORKING_DIR" \
-  --output-dir "./generated"
+  --output-dir "./generated" \
+  --workspace-id "$WORKSPACE_ID" \
+  --workspace-name "$WORKSPACE_NAME" \
+  --vcs-repo-url "$VCS_REPO_URL" \
+  --vcs-branch "$VCS_BRANCH"
 ```
 
 **Two modes:**
@@ -152,6 +187,10 @@ assets/terraform-template/
 - `--assets-dir` — Override default assets/terraform-template path
 - `--model-id` — Override Bedrock model ID
 - `--region` — Override AWS region
+- `--workspace-id` — Workspace ID (stored in memory for future reference)
+- `--workspace-name` — Workspace name (stored in memory)
+- `--vcs-repo-url` — VCS repository URL (stored in memory)
+- `--vcs-branch` — VCS branch (stored in memory)
 
 **Model:** `us.anthropic.claude-opus-4-6-20250610` (configurable via `--model-id` or `BEDROCK_MODEL_ID` env var)
 
@@ -183,6 +222,13 @@ python3 scripts/push_to_scm.py \
 
 ---
 
+### Step 6: Store Execution in Memory (Automatic)
+After a successful generation (Step 4), the execution context is automatically stored in MemoryDB if `MEMORYDB_HOST` is configured. This includes all workspace metadata, standards, templates, generated code, and the change request embedding. Future similar requests will find this entry via vector search and skip Steps 1-3.
+
+This step requires no manual action — it runs automatically at the end of `generate_terraform_code.py`.
+
+---
+
 ## Error Handling
 | Scenario | Behavior |
 |---|---|
@@ -200,6 +246,9 @@ python3 scripts/push_to_scm.py \
 | Branch already exists | Step 5 exits with conflict error |
 | Git push fails | Step 5 exits with clear error message |
 | Network/auth errors | All scripts exit with clear error messages |
+| MemoryDB unreachable | Memory skipped — full flow runs (graceful degradation) |
+| Embedding model fails | Memory skipped — full flow runs (graceful degradation) |
+| Memory store fails after generation | Code generated successfully but not memorized (warning logged) |
 
 ## API Reference
 - [Terraform Cloud Workspaces API](https://developer.hashicorp.com/terraform/cloud-docs/api-docs/workspaces)

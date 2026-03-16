@@ -8,11 +8,22 @@ Two modes:
   - MODIFY: When modifying existing config, the prompt includes only the
     existing workspace code and standards.
 
+Memory (optional):
+  When MEMORYDB_HOST is set, the script checks Amazon MemoryDB (Redis VSS) for
+  similar past executions. On a cache hit (similarity > threshold), Steps 1-3
+  are skipped and cached context is reused. After successful generation, the
+  execution context is stored in MemoryDB for future reuse.
+
 Environment variables:
     AWS_REGION            - AWS region for Bedrock (default: ap-southeast-1)
     AWS_ACCESS_KEY_ID     - AWS access key (or use IAM role)
     AWS_SECRET_ACCESS_KEY - AWS secret key (or use IAM role)
     BEDROCK_MODEL_ID      - Bedrock model ID (default: us.anthropic.claude-opus-4-6-20250610)
+    MEMORYDB_HOST         - Amazon MemoryDB endpoint (optional, enables memory)
+    MEMORYDB_PORT         - MemoryDB port (default: 6379)
+    MEMORY_SIMILARITY_THRESHOLD - Cosine similarity threshold (default: 0.85)
+    MEMORY_TTL_DAYS       - Days to keep cached contexts (default: 90)
+    EMBEDDING_MODEL_ID    - Bedrock embedding model (default: amazon.titan-embed-text-v2:0)
 
 Usage:
     python3 generate_terraform_code.py \
@@ -345,6 +356,36 @@ def validate_structure(output_dir: str) -> bool:
 # Main
 # ---------------------------------------------------------------------------
 
+def _init_memory(region: str):
+    """Initialize MemoryManager if MEMORYDB_HOST is configured.
+
+    Returns MemoryManager or None if memory is not configured.
+    """
+    redis_host = os.environ.get("MEMORYDB_HOST", "")
+    if not redis_host:
+        return None
+
+    redis_port = int(os.environ.get("MEMORYDB_PORT", "6379"))
+    threshold = float(os.environ.get("MEMORY_SIMILARITY_THRESHOLD", "0.85"))
+    ttl_days = int(os.environ.get("MEMORY_TTL_DAYS", "90"))
+    embedding_model = os.environ.get("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
+
+    try:
+        from memory.embeddings import BedrockEmbeddings
+        from memory.redis_store import RedisMemoryStore
+        from memory.manager import MemoryManager
+
+        embeddings = BedrockEmbeddings(region=region, model_id=embedding_model)
+        store = RedisMemoryStore(host=redis_host, port=redis_port, ttl_days=ttl_days)
+        manager = MemoryManager(embeddings=embeddings, store=store, threshold=threshold)
+        print(f"  Memory enabled: {redis_host}:{redis_port}")
+        return manager
+    except Exception as e:
+        print(f"  WARNING: Failed to initialize memory: {e}", file=sys.stderr)
+        print("  Proceeding without memory.", file=sys.stderr)
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate Terraform code via Amazon Bedrock (Claude Opus 4.6)")
     parser.add_argument("--change-request", required=True, help="Description of the change request to implement")
@@ -354,6 +395,10 @@ def main():
     parser.add_argument("--assets-dir", default=None, help="Path to assets/terraform-template directory (overrides default)")
     parser.add_argument("--region", default=None, help="AWS region for Bedrock (overrides AWS_REGION)")
     parser.add_argument("--model-id", default=None, help="Bedrock model ID (overrides BEDROCK_MODEL_ID)")
+    parser.add_argument("--workspace-id", default="", help="Workspace ID (stored in memory for future reference)")
+    parser.add_argument("--workspace-name", default="", help="Workspace name (stored in memory for future reference)")
+    parser.add_argument("--vcs-repo-url", default="", help="VCS repository URL (stored in memory)")
+    parser.add_argument("--vcs-branch", default="", help="VCS branch (stored in memory)")
     args = parser.parse_args()
 
     region = args.region or os.environ.get("AWS_REGION", "ap-southeast-1")
@@ -363,26 +408,55 @@ def main():
     if args.assets_dir:
         ASSETS_DIR = args.assets_dir
 
-    # 1. Load context
-    print("Loading organizational standards...")
-    standards = load_standards(args.standards_dir)
+    # 0. Initialize memory (optional)
+    print("Initializing memory...")
+    memory = _init_memory(region)
 
-    print("\nReading existing workspace code...")
-    existing_files = read_existing_code(args.workspace_dir)
+    # 0.1 Check memory for similar past execution
+    cached_context = None
+    if memory:
+        cached_context = memory.find_similar(args.change_request)
 
-    # 2. Detect request type and load templates if creating new resources
-    print("\nDetecting request type...")
-    resource_types = detect_resource_types(args.change_request)
+    if cached_context:
+        # CACHE HIT — reuse cached standards/templates, read existing code fresh
+        print(f"\nMEMORY HIT (similarity={cached_context.similarity_score:.3f})")
+        print(f"  Reusing cached context from: \"{cached_context.change_request}\"")
+        print(f"  Cached workspace: {cached_context.workspace_name} ({cached_context.workspace_id})")
+        standards = cached_context.standards
+        templates = cached_context.templates
+        resource_types = cached_context.resource_types
+        executed_steps = ["generate", "push"]
 
-    templates = {}
-    if resource_types:
-        print(f"  CREATE mode — detected resource types: {', '.join(resource_types)}")
-        print("\nLoading resource templates from assets...")
-        templates = load_templates(resource_types)
-        if not templates:
-            print("  WARNING: No matching templates found in assets. Proceeding without templates.", file=sys.stderr)
+        # Always read existing code fresh (it may have changed outside AI)
+        print("\nReading existing workspace code (fresh)...")
+        existing_files = read_existing_code(args.workspace_dir)
     else:
-        print("  MODIFY mode — no new resource types detected, using existing code context only.")
+        # CACHE MISS — run full flow (Steps 1-3)
+        if memory:
+            print("\nNo similar past execution found. Running full flow...")
+
+        # 1. Load context
+        print("\nLoading organizational standards...")
+        standards = load_standards(args.standards_dir)
+
+        print("\nReading existing workspace code...")
+        existing_files = read_existing_code(args.workspace_dir)
+
+        # 2. Detect request type and load templates if creating new resources
+        print("\nDetecting request type...")
+        resource_types = detect_resource_types(args.change_request)
+
+        templates = {}
+        if resource_types:
+            print(f"  CREATE mode — detected resource types: {', '.join(resource_types)}")
+            print("\nLoading resource templates from assets...")
+            templates = load_templates(resource_types)
+            if not templates:
+                print("  WARNING: No matching templates found in assets. Proceeding without templates.", file=sys.stderr)
+        else:
+            print("  MODIFY mode — no new resource types detected, using existing code context only.")
+
+        executed_steps = ["validate", "clone", "fetch", "generate", "push"]
 
     # 3. Build prompt
     print("\nBuilding prompt...")
@@ -412,6 +486,27 @@ def main():
     # 7. Validate structure
     print("\nValidating generated structure...")
     validate_structure(args.output_dir)
+
+    # 8. Store execution in memory for future reuse
+    if memory:
+        from memory.models import ExecutionContext
+
+        print("\nStoring execution in memory...")
+        context = ExecutionContext(
+            change_request=args.change_request,
+            workspace_id=args.workspace_id,
+            workspace_name=args.workspace_name,
+            vcs_repo_url=args.vcs_repo_url,
+            vcs_branch=args.vcs_branch,
+            working_dir=args.workspace_dir,
+            standards=standards,
+            templates=templates,
+            generated_code=generated_files,
+            resource_types=resource_types,
+            execution_mode="CREATE" if resource_types else "MODIFY",
+            executed_steps=executed_steps,
+        )
+        memory.remember(context)
 
     print(f"\nSUCCESS: Terraform code generated in '{args.output_dir}'.")
 
