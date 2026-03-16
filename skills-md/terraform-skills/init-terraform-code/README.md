@@ -85,7 +85,8 @@ MEMORYDB_HOST="clustercfg.xxx.memorydb.ap-southeast-1.amazonaws.com"
 MEMORYDB_PORT="6379"
 MEMORY_SIMILARITY_THRESHOLD="0.85"
 MEMORY_TTL_DAYS="90"
-EMBEDDING_MODEL_ID="cohere.embed-v4:0"
+MEMORYDB_USERNAME="default"             # MemoryDB ACL username
+MEMORYDB_PASSWORD="your-password"       # MemoryDB ACL password
 ```
 
 ### Project Structure

@@ -7,16 +7,15 @@ import sys
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
-DEFAULT_EMBEDDING_MODEL = "cohere.embed-v4:0"
-EMBEDDING_DIMENSIONS = 1024
+EMBEDDING_MODEL = "cohere.embed-v4:0"
 
 
 class BedrockEmbeddings:
     """Generate text embeddings using Amazon Bedrock Cohere Embed V4."""
 
-    def __init__(self, region: str, model_id: str = DEFAULT_EMBEDDING_MODEL):
-        self.model_id = model_id
-        self.dimensions = EMBEDDING_DIMENSIONS
+    def __init__(self, region: str):
+        self.model_id = EMBEDDING_MODEL
+        self.dimensions = None
         try:
             self.client = boto3.client("bedrock-runtime", region_name=region)
         except NoCredentialsError:
@@ -30,7 +29,7 @@ class BedrockEmbeddings:
             text: The text to embed.
 
         Returns:
-            A list of floats representing the embedding vector (1024 dimensions).
+            A list of floats representing the embedding vector.
         """
         body = json.dumps({
             "texts": [text],
@@ -46,7 +45,16 @@ class BedrockEmbeddings:
                 body=body,
             )
             result = json.loads(response["body"].read())
-            return result["embeddings"]["float"][0]
+            vector = result["embeddings"]["float"][0]
+
+            # Set dimensions on first call
+            if self.dimensions is None:
+                global EMBEDDING_DIMENSIONS
+                self.dimensions = len(vector)
+                EMBEDDING_DIMENSIONS = self.dimensions
+                print(f"  Embedding model {self.model_id}: {self.dimensions} dimensions")
+
+            return vector
 
         except ClientError as e:
             print(f"ERROR: Bedrock embedding failed: {e}", file=sys.stderr)

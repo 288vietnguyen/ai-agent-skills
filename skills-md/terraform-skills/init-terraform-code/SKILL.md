@@ -34,7 +34,6 @@ export MEMORYDB_USERNAME="default"             # MemoryDB ACL username
 export MEMORYDB_PASSWORD="your-password"       # MemoryDB ACL password
 export MEMORY_SIMILARITY_THRESHOLD="0.85"      # Cosine similarity threshold (0-1)
 export MEMORY_TTL_DAYS="90"                    # Days to keep cached contexts
-export EMBEDDING_MODEL_ID="cohere.embed-v4:0"  # Embedding model for VSS
 ```
 
 ### Script Arguments

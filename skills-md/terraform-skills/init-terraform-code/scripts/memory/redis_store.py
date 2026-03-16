@@ -8,15 +8,12 @@ matching of change requests.
 import struct
 import sys
 import uuid
-from datetime import datetime, timezone
-
 from redis.cluster import RedisCluster
 from redis.commands.search.field import TextField, VectorField
 from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 from redis.exceptions import ResponseError
 
-from memory.embeddings import EMBEDDING_DIMENSIONS
 from memory.models import ExecutionContext
 
 INDEX_NAME = "dso-execution-idx"
@@ -32,6 +29,7 @@ class RedisMemoryStore:
                  index_name: str = INDEX_NAME, ttl_days: int = DEFAULT_TTL_DAYS):
         self.index_name = index_name
         self.ttl_days = ttl_days
+        self._index_ready = False
 
         kwargs = {
             "host": host,
@@ -47,12 +45,14 @@ class RedisMemoryStore:
 
         self.client = RedisCluster(**kwargs)
 
-        self._ensure_index()
-
-    def _ensure_index(self):
+    def _ensure_index(self, dimensions: int):
         """Create the vector search index if it does not exist."""
+        if self._index_ready:
+            return
+
         try:
             self.client.ft(self.index_name).info()
+            self._index_ready = True
         except ResponseError:
             # Index does not exist — create it
             schema = (
@@ -61,7 +61,7 @@ class RedisMemoryStore:
                     "HNSW",
                     {
                         "TYPE": "FLOAT32",
-                        "DIM": EMBEDDING_DIMENSIONS,
+                        "DIM": dimensions,
                         "DISTANCE_METRIC": "COSINE",
                     },
                 ),
@@ -82,7 +82,8 @@ class RedisMemoryStore:
                 fields=schema,
                 definition=definition,
             )
-            print(f"  Created MemoryDB vector index: {self.index_name}")
+            self._index_ready = True
+            print(f"  Created MemoryDB vector index: {self.index_name} (dim={dimensions})")
 
     @staticmethod
     def _vector_to_bytes(vector: list[float]) -> bytes:
@@ -105,6 +106,8 @@ class RedisMemoryStore:
         Returns:
             The Redis key of the stored entry.
         """
+        self._ensure_index(len(embedding))
+
         key = f"{KEY_PREFIX}{uuid.uuid4().hex}"
         data = context.to_redis_hash()
 
@@ -133,6 +136,8 @@ class RedisMemoryStore:
         Returns:
             List of ExecutionContext objects sorted by similarity (highest first).
         """
+        self._ensure_index(len(query_embedding))
+
         query_blob = self._vector_to_bytes(query_embedding)
 
         # Redis VSS KNN query
@@ -187,8 +192,6 @@ class RedisMemoryStore:
         Note: Redis TTL handles this automatically via EXPIRE, but this
         method can be used for manual cleanup if needed.
         """
-        cutoff = datetime.now(timezone.utc).isoformat()
-        # Scan for keys and check created_at — only needed if TTL is not set
         count = 0
         for key in self.client.scan_iter(match=f"{KEY_PREFIX}*".encode()):
             ttl = self.client.ttl(key)
