@@ -8,7 +8,7 @@ matching of change requests.
 import struct
 import sys
 import uuid
-from redis.cluster import RedisCluster
+import redis
 from redis.commands.search.field import TextField, VectorField
 from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
@@ -43,50 +43,57 @@ class RedisMemoryStore:
         if password:
             kwargs["password"] = password
 
-        self.client = RedisCluster(**kwargs)
+        self.client = redis.Redis(**kwargs)
 
     def _ensure_index(self, dimensions: int):
         """Create or recreate the vector search index if needed.
 
-        If the index exists but has a different vector dimension (e.g., after
-        switching embedding models), the old index is dropped and recreated.
+        Verifies the existing index accepts vectors of the given dimension
+        by running a dummy KNN search. If the dimension doesn't match,
+        the index and old entries are dropped and recreated.
         """
         if self._index_ready:
             return
 
         try:
-            info = self.client.ft(self.index_name).info()
-            # Check if existing index dimension matches
-            existing_dim = self._get_index_dimension(info)
-            if existing_dim and existing_dim != dimensions:
-                print(f"  Index dimension mismatch: existing={existing_dim}, needed={dimensions}. Recreating index...")
-                self.client.ft(self.index_name).dropindex(delete_documents=False)
-                self._create_index(dimensions)
-            else:
+            self.client.ft(self.index_name).info()
+            # Index exists — verify it accepts this dimension
+            if self._test_dimension(dimensions):
                 self._index_ready = True
+                print(f"  Using existing index: {self.index_name}")
+            else:
+                print(f"  Index dimension mismatch (needed={dimensions}). Recreating...")
+                self.client.ft(self.index_name).dropindex(delete_documents=False)
+                self._flush_old_entries()
+                self._create_index(dimensions)
         except ResponseError:
             # Index does not exist — create it
             self._create_index(dimensions)
 
-    @staticmethod
-    def _get_index_dimension(info) -> int | None:
-        """Extract vector dimension from FT.INFO result."""
+    def _test_dimension(self, dimensions: int) -> bool:
+        """Test if the existing index accepts vectors of the given dimension."""
         try:
-            # info.attributes contains field definitions
-            for attr in info.get("attributes", []):
-                if isinstance(attr, list):
-                    # Look for DIM in vector field attributes
-                    for i, val in enumerate(attr):
-                        if isinstance(val, bytes):
-                            val = val.decode()
-                        if val == "DIM" and i + 1 < len(attr):
-                            dim_val = attr[i + 1]
-                            if isinstance(dim_val, bytes):
-                                dim_val = dim_val.decode()
-                            return int(dim_val)
-        except Exception:
-            pass
-        return None
+            dummy_blob = self._vector_to_bytes([0.0] * dimensions)
+            q = (
+                Query("*=>[KNN 1 @embedding $query_vec AS score]")
+                .return_fields("score")
+                .dialect(2)
+            )
+            self.client.ft(self.index_name).search(
+                q, query_params={"query_vec": dummy_blob}
+            )
+            return True
+        except ResponseError:
+            return False
+
+    def _flush_old_entries(self):
+        """Delete old hash entries with incompatible vectors."""
+        count = 0
+        for key in self.client.scan_iter(match=f"{KEY_PREFIX}*".encode()):
+            self.client.delete(key)
+            count += 1
+        if count:
+            print(f"  Deleted {count} old entries with incompatible vectors.")
 
     def _create_index(self, dimensions: int):
         """Create the VSS index with the given vector dimensions."""
