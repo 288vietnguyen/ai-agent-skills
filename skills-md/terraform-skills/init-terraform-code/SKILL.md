@@ -51,7 +51,7 @@ export MEMORY_TTL_DAYS="90"                    # Days to keep cached contexts
 2. **On cache hit, skip Steps 1-3.** When `check_memory.py` returns `cache_hit: true`, do NOT run `validate_clean_state.py`, `clone_workspace_repo.py`, or `fetch_standards.py`. Pass the `cached_context` directly to `generate_terraform_code.py` via `--cached-context`.
 3. **On cache miss, run all steps in order.** Steps 1 → 2 → 3 → 4 → 5 must execute sequentially. Do not skip or reorder steps.
 4. **Always read existing workspace code fresh.** Even on a cache hit, existing `.tf` files must be read from the cloned repo — never from cache. Code can change outside the AI flow.
-5. **Always push to a new branch.** Never push generated code directly to the default branch. Use a change request branch (e.g., `change-request/$CR_ID`).
+5. **Branch naming and merge request.** When creating a new branch to push code to SCM, the branch name MUST start with `feature/` (e.g., `feature/CR-123`). Never push directly to the default branch. After pushing, automatically create a merge request targeting the workspace's `vcs_branch`.
 6. **Stop on any step failure.** If any step exits with code 1, abort the entire flow. Do not continue to the next step.
 7. **Memory is optional.** If `MEMORYDB_HOST` is not set or MemoryDB is unreachable, run the full flow (Steps 1-5) without error. Memory failures must never block code generation.
 
@@ -246,25 +246,32 @@ assets/terraform-template/
 
 ---
 
-### Step 5: Update, Commit, and Push to SCM
-Copy generated code into the cloned workspace repo, commit, and push to a change request branch.
+### Step 5: Update, Commit, Push to SCM, and Create Merge Request
+Copy generated code into the cloned workspace repo, commit, push to a `feature/` branch, and auto-create a merge request targeting the workspace's VCS branch.
 
 ```bash
 python3 scripts/push_to_scm.py \
   --repo-dir "./workspace-repo" \
   --source-dir "./generated" \
   --working-dir "$WORKING_DIR" \
-  --branch "change-request/$CR_ID" \
+  --branch "feature/$CR_ID" \
+  --target-branch "$VCS_BRANCH" \
   --commit-message "Init Terraform code for change request $CR_ID"
 ```
 
-**Actions:**
-1. Copies generated Terraform files into the workspace working directory
-2. Creates a new change request branch
-3. Stages and commits all changes
-4. Pushes the branch to the remote
+**Branch naming:** All branches MUST start with `feature/`. The script enforces this prefix and will reject branches that do not match.
 
-**Exit code 0** = pushed successfully, **exit code 1** = push failed.
+**Actions:**
+1. Validates branch name starts with `feature/`
+2. Copies generated Terraform files into the workspace working directory
+3. Creates a new feature branch
+4. Stages and commits all changes
+5. Pushes the branch to the remote
+6. Auto-creates a merge request from the feature branch to `--target-branch`
+
+**Merge request:** Creates a GitLab merge request via API. Requires `GITLAB_TOKEN` env var to authenticate.
+
+**Exit code 0** = pushed and merge request created successfully, **exit code 1** = failed.
 
 ---
 
