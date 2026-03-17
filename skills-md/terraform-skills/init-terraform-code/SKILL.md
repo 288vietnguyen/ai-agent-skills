@@ -45,17 +45,62 @@ export MEMORY_TTL_DAYS="90"                    # Days to keep cached contexts
 - `--tfe-url` (optional) - Overrides `TFE_URL` env var
 - `--token` (optional) - Overrides `TFE_TOKEN` env var
 
+## Rules
+
+1. **Always check memory first.** Step 0 (`check_memory.py`) MUST run before any other step. Never run validate, clone, or fetch before checking the cache.
+2. **On cache hit, skip Steps 1-3.** When `check_memory.py` returns `cache_hit: true`, do NOT run `validate_clean_state.py`, `clone_workspace_repo.py`, or `fetch_standards.py`. Pass the `cached_context` directly to `generate_terraform_code.py` via `--cached-context`.
+3. **On cache miss, run all steps in order.** Steps 1 → 2 → 3 → 4 → 5 must execute sequentially. Do not skip or reorder steps.
+4. **Always read existing workspace code fresh.** Even on a cache hit, existing `.tf` files must be read from the cloned repo — never from cache. Code can change outside the AI flow.
+5. **Always push to a new branch.** Never push generated code directly to the default branch. Use a change request branch (e.g., `change-request/$CR_ID`).
+6. **Stop on any step failure.** If any step exits with code 1, abort the entire flow. Do not continue to the next step.
+7. **Memory is optional.** If `MEMORYDB_HOST` is not set or MemoryDB is unreachable, run the full flow (Steps 1-5) without error. Memory failures must never block code generation.
+
+---
+
 ## Flow
 
-### Step 0: Memory Lookup (Optional)
-When `MEMORYDB_HOST` is configured, the script embeds the change request using Amazon Bedrock Titan Embed Text V2 and searches MemoryDB (Redis VSS) for similar past executions.
+### Step 0: Memory Lookup (Run First)
+**This step runs BEFORE all other steps.** When `MEMORYDB_HOST` is configured, check MemoryDB for similar past executions using Cohere Embed V4 vector search.
 
-- **CACHE HIT** (cosine similarity > `MEMORY_SIMILARITY_THRESHOLD`): Steps 1-3 are skipped. Cached standards, VCS URL, and templates are reused. Existing workspace code is always read fresh (it may change outside AI). Execution jumps directly to Step 4 (code generation).
-- **CACHE MISS**: The full flow (Steps 1-5) runs as normal.
-- **Memory unavailable**: If MemoryDB is unreachable or `MEMORYDB_HOST` is not set, the full flow runs with no errors (graceful degradation).
+```bash
+MEMORY_RESULT=$(python3 scripts/check_memory.py --change-request "$CHANGE_REQUEST")
+```
 
-**Data stored per execution** (after Step 5):
-- Change request text + embedding vector (1024-dim)
+**Output:** JSON to stdout with `cache_hit` boolean.
+
+- **CACHE HIT** (`cache_hit: true`): **Skip Steps 1-3 entirely.** Pass the `cached_context` JSON directly to Step 4 via `--cached-context`. Cached standards, VCS URL, and templates are reused. Existing workspace code is always read fresh.
+- **CACHE MISS** (`cache_hit: false`): Run the full flow (Steps 1-5) as normal.
+- **Memory unavailable**: `cache_hit: false` with reason. Run full flow (graceful degradation).
+
+**Example flow with cache check:**
+```bash
+# Step 0: Check memory FIRST
+MEMORY_RESULT=$(python3 scripts/check_memory.py --change-request "$CHANGE_REQUEST")
+CACHE_HIT=$(echo "$MEMORY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('cache_hit',False))")
+
+if [ "$CACHE_HIT" = "True" ]; then
+    # Skip Steps 1-3, pass cached context to Step 4
+    CACHED_CONTEXT=$(echo "$MEMORY_RESULT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['cached_context']))")
+    python3 scripts/generate_terraform_code.py \
+        --change-request "$CHANGE_REQUEST" \
+        --cached-context "$CACHED_CONTEXT" \
+        --standards-dir ./standards \
+        --workspace-dir "$WORKSPACE_DIR" \
+        --output-dir ./generated
+else
+    # Run full flow: Steps 1-3, then Step 4 without --cached-context
+    python3 scripts/validate_clean_state.py ...
+    python3 scripts/clone_workspace_repo.py ...
+    python3 scripts/fetch_standards.py ...
+    python3 scripts/generate_terraform_code.py ...
+fi
+
+# Step 5: Push
+python3 scripts/push_to_scm.py ...
+```
+
+**Data stored per execution** (after Step 4):
+- Change request text + embedding vector (1536-dim, Cohere Embed V4)
 - Workspace metadata: ID, name, VCS URL, branch, working directory
 - Standards content (all `.md` files)
 - Templates used for code generation

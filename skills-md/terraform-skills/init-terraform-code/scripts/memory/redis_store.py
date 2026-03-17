@@ -37,6 +37,8 @@ class RedisMemoryStore:
             "ssl": ssl,
             "ssl_cert_reqs": None,
             "decode_responses": False,  # VSS needs bytes for vectors
+            "socket_timeout": 10,       # 10s timeout for operations
+            "socket_connect_timeout": 5,  # 5s timeout for connection
         }
         if username:
             kwargs["username"] = username

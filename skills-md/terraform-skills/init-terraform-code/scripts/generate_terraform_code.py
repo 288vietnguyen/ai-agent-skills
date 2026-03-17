@@ -369,24 +369,31 @@ def _init_memory(region: str):
     redis_password = os.environ.get("MEMORYDB_PASSWORD", "")
     threshold = float(os.environ.get("MEMORY_SIMILARITY_THRESHOLD", "0.85"))
     ttl_days = int(os.environ.get("MEMORY_TTL_DAYS", "90"))
-    try:
-        from memory.embeddings import BedrockEmbeddings
-        from memory.redis_store import RedisMemoryStore
-        from memory.manager import MemoryManager
+    from memory.embeddings import BedrockEmbeddings
+    from memory.redis_store import RedisMemoryStore
+    from memory.manager import MemoryManager
 
-        embeddings = BedrockEmbeddings(region=region)
-        store = RedisMemoryStore(
-            host=redis_host, port=redis_port,
-            username=redis_username, password=redis_password,
-            ttl_days=ttl_days,
-        )
-        manager = MemoryManager(embeddings=embeddings, store=store, threshold=threshold)
-        print(f"  Memory enabled: {redis_host}:{redis_port}")
-        return manager
-    except Exception as e:
-        print(f"  WARNING: Failed to initialize memory: {e}", file=sys.stderr)
-        print("  Proceeding without memory.", file=sys.stderr)
-        return None
+    for attempt in range(1, 3):
+        try:
+            embeddings = BedrockEmbeddings(region=region)
+            store = RedisMemoryStore(
+                host=redis_host, port=redis_port,
+                username=redis_username, password=redis_password,
+                ttl_days=ttl_days,
+            )
+            # Test Redis connection
+            store.client.ping()
+            manager = MemoryManager(embeddings=embeddings, store=store, threshold=threshold)
+            print(f"  Memory connected: {redis_host}:{redis_port}")
+            return manager
+        except Exception as e:
+            print(f"  WARNING: Memory init attempt {attempt}/2 failed: {e}", file=sys.stderr)
+            if attempt < 2:
+                import time
+                time.sleep(2)
+
+    print("  WARNING: Memory unavailable after 2 attempts. Proceeding without memory.", file=sys.stderr)
+    return None
 
 
 def main():
@@ -402,6 +409,7 @@ def main():
     parser.add_argument("--workspace-name", default="", help="Workspace name (stored in memory for future reference)")
     parser.add_argument("--vcs-repo-url", default="", help="VCS repository URL (stored in memory)")
     parser.add_argument("--vcs-branch", default="", help="VCS branch (stored in memory)")
+    parser.add_argument("--cached-context", default="", help="JSON from check_memory.py cached_context (skips internal memory lookup)")
     args = parser.parse_args()
 
     region = args.region or os.environ.get("AWS_REGION", "ap-southeast-1")
@@ -411,32 +419,29 @@ def main():
     if args.assets_dir:
         ASSETS_DIR = args.assets_dir
 
-    # 0. Initialize memory (optional)
-    print("Initializing memory...")
+    # 0. Check for cached context from check_memory.py
     memory = _init_memory(region)
+    cached = None
+    if args.cached_context:
+        try:
+            cached = json.loads(args.cached_context)
+            print("\n=== Using cached context from check_memory.py ===")
+        except json.JSONDecodeError:
+            print("WARNING: Could not parse --cached-context JSON. Running full flow.", file=sys.stderr)
 
-    # 0.1 Check memory for similar past execution
-    cached_context = None
-    if memory:
-        cached_context = memory.find_similar(args.change_request)
-
-    if cached_context:
+    if cached:
         # CACHE HIT — reuse cached standards/templates, read existing code fresh
-        print(f"\nMEMORY HIT (similarity={cached_context.similarity_score:.3f})")
-        print(f"  Reusing cached context from: \"{cached_context.change_request}\"")
-        print(f"  Cached workspace: {cached_context.workspace_name} ({cached_context.workspace_id})")
-        standards = cached_context.standards
-        templates = cached_context.templates
-        resource_types = cached_context.resource_types
+        print(f"  Reusing cached context from: \"{cached.get('change_request', '')}\"")
+        print(f"  Cached workspace: {cached.get('workspace_name', '')} ({cached.get('workspace_id', '')})")
+        standards = cached.get("standards", {})
+        templates = cached.get("templates", {})
+        resource_types = cached.get("resource_types", [])
         executed_steps = ["generate", "push"]
 
         # Always read existing code fresh (it may have changed outside AI)
         print("\nReading existing workspace code (fresh)...")
         existing_files = read_existing_code(args.workspace_dir)
     else:
-        # CACHE MISS — run full flow (Steps 1-3)
-        if memory:
-            print("\nNo similar past execution found. Running full flow...")
 
         # 1. Load context
         print("\nLoading organizational standards...")
