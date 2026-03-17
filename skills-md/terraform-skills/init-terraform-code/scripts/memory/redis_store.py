@@ -46,44 +46,79 @@ class RedisMemoryStore:
         self.client = RedisCluster(**kwargs)
 
     def _ensure_index(self, dimensions: int):
-        """Create the vector search index if it does not exist."""
+        """Create or recreate the vector search index if needed.
+
+        If the index exists but has a different vector dimension (e.g., after
+        switching embedding models), the old index is dropped and recreated.
+        """
         if self._index_ready:
             return
 
         try:
-            self.client.ft(self.index_name).info()
-            self._index_ready = True
+            info = self.client.ft(self.index_name).info()
+            # Check if existing index dimension matches
+            existing_dim = self._get_index_dimension(info)
+            if existing_dim and existing_dim != dimensions:
+                print(f"  Index dimension mismatch: existing={existing_dim}, needed={dimensions}. Recreating index...")
+                self.client.ft(self.index_name).dropindex(delete_documents=False)
+                self._create_index(dimensions)
+            else:
+                self._index_ready = True
         except ResponseError:
             # Index does not exist — create it
-            schema = (
-                VectorField(
-                    "embedding",
-                    "HNSW",
-                    {
-                        "TYPE": "FLOAT32",
-                        "DIM": dimensions,
-                        "DISTANCE_METRIC": "COSINE",
-                    },
-                ),
-                TextField("change_request"),
-                TextField("workspace_id"),
-                TextField("workspace_name"),
-                TextField("execution_mode"),
-                TextField("resource_types"),
-                TextField("created_at"),
-            )
+            self._create_index(dimensions)
 
-            definition = IndexDefinition(
-                prefix=[KEY_PREFIX],
-                index_type=IndexType.HASH,
-            )
+    @staticmethod
+    def _get_index_dimension(info) -> int | None:
+        """Extract vector dimension from FT.INFO result."""
+        try:
+            # info.attributes contains field definitions
+            for attr in info.get("attributes", []):
+                if isinstance(attr, list):
+                    # Look for DIM in vector field attributes
+                    for i, val in enumerate(attr):
+                        if isinstance(val, bytes):
+                            val = val.decode()
+                        if val == "DIM" and i + 1 < len(attr):
+                            dim_val = attr[i + 1]
+                            if isinstance(dim_val, bytes):
+                                dim_val = dim_val.decode()
+                            return int(dim_val)
+        except Exception:
+            pass
+        return None
 
-            self.client.ft(self.index_name).create_index(
-                fields=schema,
-                definition=definition,
-            )
-            self._index_ready = True
-            print(f"  Created MemoryDB vector index: {self.index_name} (dim={dimensions})")
+    def _create_index(self, dimensions: int):
+        """Create the VSS index with the given vector dimensions."""
+        schema = (
+            VectorField(
+                "embedding",
+                "HNSW",
+                {
+                    "TYPE": "FLOAT32",
+                    "DIM": dimensions,
+                    "DISTANCE_METRIC": "COSINE",
+                },
+            ),
+            TextField("change_request"),
+            TextField("workspace_id"),
+            TextField("workspace_name"),
+            TextField("execution_mode"),
+            TextField("resource_types"),
+            TextField("created_at"),
+        )
+
+        definition = IndexDefinition(
+            prefix=[KEY_PREFIX],
+            index_type=IndexType.HASH,
+        )
+
+        self.client.ft(self.index_name).create_index(
+            fields=schema,
+            definition=definition,
+        )
+        self._index_ready = True
+        print(f"  Created MemoryDB vector index: {self.index_name} (dim={dimensions})")
 
     @staticmethod
     def _vector_to_bytes(vector: list[float]) -> bytes:

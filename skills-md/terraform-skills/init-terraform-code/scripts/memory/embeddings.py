@@ -49,9 +49,7 @@ class BedrockEmbeddings:
 
             # Set dimensions on first call
             if self.dimensions is None:
-                global EMBEDDING_DIMENSIONS
                 self.dimensions = len(vector)
-                EMBEDDING_DIMENSIONS = self.dimensions
                 print(f"  Embedding model {self.model_id}: {self.dimensions} dimensions")
 
             return vector
