@@ -1,0 +1,39 @@
+{
+  "name": "init-terraform-code",
+  "description": "Generate Terraform code for a change request. Checks memory cache, validates workspace, clones repo, fetches standards, generates code via Bedrock, and pushes to SCM.",
+  "prompt": "file://./skills-md/terraform-skills/init-terraform-code/SKILL.md",
+  "tools": ["read", "write", "shell", "aws"],
+  "allowedTools": ["read", "shell", "aws"],
+  "toolsSettings": {
+    "shell": {
+      "allowedCommands": [
+        "python3 *",
+        "git *",
+        "curl *"
+      ]
+    },
+    "aws": {
+      "allowedServices": ["s3", "bedrock", "bedrock-runtime", "sts"]
+    },
+    "write": {
+      "allowedPaths": [
+        "workspace-repo/**",
+        "generated/**",
+        "standards/**"
+      ]
+    }
+  },
+  "resources": [
+    "skill://./skills-md/terraform-skills/init-terraform-code/SKILL.md",
+    "file://./skills-md/terraform-skills/init-terraform-code/scripts/*.py",
+    "file://./skills-md/terraform-skills/init-terraform-code/assets/terraform-template/**"
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "python3 -c \"import requests, boto3, redis; print('{\\\"dependencies\\\":\\\"ok\\\"}')\" 2>/dev/null || echo '{\"dependencies\":\"missing\",\"error\":\"install: pip install requests boto3 redis\"}'",
+        "timeout_ms": 10000
+      }
+    ]
+  }
+}

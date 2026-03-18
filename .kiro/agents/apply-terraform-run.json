@@ -1,0 +1,19 @@
+{
+  "name": "apply-terraform-run",
+  "description": "Apply a Terraform run via the TFE REST API. Validates run state, confirms plan-and-apply type, triggers apply, and polls for the final result.",
+  "prompt": "file://./skills-md/terraform-skills/apply-terraform-run/SKILL.md",
+  "tools": ["read", "shell"],
+  "allowedTools": ["read", "shell"],
+  "toolsSettings": {
+    "shell": {
+      "allowedCommands": [
+        "python3 *",
+        "curl *"
+      ]
+    }
+  },
+  "resources": [
+    "skill://./skills-md/terraform-skills/apply-terraform-run/SKILL.md",
+    "file://./skills-md/terraform-skills/apply-terraform-run/scripts/*.py"
+  ]
+}

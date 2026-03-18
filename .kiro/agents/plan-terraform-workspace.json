@@ -1,0 +1,19 @@
+{
+  "name": "plan-terraform-workspace",
+  "description": "Plan a Terraform workspace via the TFE REST API. Validates workspace state, creates a plan run, and returns results with all changed resources.",
+  "prompt": "file://./skills-md/terraform-skills/plan-terraform-workspace/SKILL.md",
+  "tools": ["read", "shell"],
+  "allowedTools": ["read", "shell"],
+  "toolsSettings": {
+    "shell": {
+      "allowedCommands": [
+        "python3 *",
+        "curl *"
+      ]
+    }
+  },
+  "resources": [
+    "skill://./skills-md/terraform-skills/plan-terraform-workspace/SKILL.md",
+    "file://./skills-md/terraform-skills/plan-terraform-workspace/scripts/*.py"
+  ]
+}
