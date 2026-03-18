@@ -54,6 +54,7 @@ export MEMORY_TTL_DAYS="90"                    # Days to keep cached contexts
 5. **Branch naming and merge request.** When creating a new branch to push code to SCM, the branch name MUST start with `feature/` (e.g., `feature/CR-123`). Never push directly to the default branch. After pushing, automatically create a merge request targeting the workspace's `vcs_branch`.
 6. **Stop on any step failure.** If any step exits with code 1, abort the entire flow. Do not continue to the next step.
 7. **Memory is optional.** If `MEMORYDB_HOST` is not set or MemoryDB is unreachable, run the full flow (Steps 1-5) without error. Memory failures must never block code generation.
+8. **Reuse existing VCS modules.** If the workspace repository already contains common modules (e.g., `module-nonprod/s3`, `module-prod/networking`), the generated code MUST reference and reuse them via `module` blocks. Do NOT create new module definitions when a suitable one already exists in the repo.
 
 ---
 
