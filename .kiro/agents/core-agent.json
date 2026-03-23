@@ -9,12 +9,14 @@
       "availableAgents": [
         "plan-terraform-workspace",
         "apply-terraform-run",
-        "init-terraform-code"
+        "init-terraform-code",
+        "terraform-report"
       ],
       "trustedAgents": [
         "plan-terraform-workspace",
         "apply-terraform-run",
-        "init-terraform-code"
+        "init-terraform-code",
+        "terraform-report"
       ]
     }
   },
@@ -22,15 +24,16 @@
     "skill://./skills-md/terraform-skills/core-agent/SKILL.md",
     "skill://./skills-md/terraform-skills/init-terraform-code/SKILL.md",
     "skill://./skills-md/terraform-skills/plan-terraform-workspace/SKILL.md",
-    "skill://./skills-md/terraform-skills/apply-terraform-run/SKILL.md"
+    "skill://./skills-md/terraform-skills/apply-terraform-run/SKILL.md",
+    "skill://./skills-md/terraform-skills/terraform-report/SKILL.md"
   ],
   "hooks": {
     "agentSpawn": [
       {
-        "command": "echo '{\"agent\":\"core-agent\",\"status\":\"ready\",\"available_skills\":[\"plan-terraform-workspace\",\"apply-terraform-run\",\"init-terraform-code\"]}'",
+        "command": "echo '{\"agent\":\"core-agent\",\"status\":\"ready\",\"available_skills\":[\"plan-terraform-workspace\",\"apply-terraform-run\",\"init-terraform-code\",\"terraform-report\"]}'",
         "timeout_ms": 5000
       }
     ]
   },
-  "welcomeMessage": "DSO AI Core Agent ready. Send a request like:\n  - Create S3 bucket with versioning in workspace aws-demo-resource in dev\n  - Plan workspace aws-demo-resource in staging\n  - Apply the latest plan for workspace aws-demo-resource in dev"
+  "welcomeMessage": "DSO AI Core Agent ready. Send a request like:\n  - Create S3 bucket with versioning in workspace aws-demo-resource in dev\n  - Plan workspace aws-demo-resource in staging\n  - Apply the latest plan for workspace aws-demo-resource in dev\n  - Generate report for workspace aws-demo-resource in nonprod"
 }

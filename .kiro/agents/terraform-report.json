@@ -1,0 +1,19 @@
+{
+  "name": "terraform-report",
+  "description": "Generate a TFE Test Report PDF from Terraform Enterprise run data. Collects workspace run details, resource changes, and produces a formatted PDF report.",
+  "prompt": "file://./skills-md/terraform-skills/terraform-report/SKILL.md",
+  "tools": ["read", "shell"],
+  "allowedTools": ["read", "shell"],
+  "toolsSettings": {
+    "shell": {
+      "allowedCommands": [
+        "python3 *",
+        "curl *"
+      ]
+    }
+  },
+  "resources": [
+    "skill://./skills-md/terraform-skills/terraform-report/SKILL.md",
+    "file://./skills-md/terraform-skills/terraform-report/scripts/*.py"
+  ]
+}

@@ -3,7 +3,7 @@
   "description": "Generate Terraform code for a change request. Checks memory cache, validates workspace, clones repo, fetches standards, generates code via Bedrock, and pushes to SCM.",
   "prompt": "file://./skills-md/terraform-skills/init-terraform-code/SKILL.md",
   "tools": ["read", "write", "shell", "aws"],
-  "allowedTools": ["read", "shell", "aws"],
+  "allowedTools": ["read", "write", "shell", "aws"],
   "toolsSettings": {
     "shell": {
       "allowedCommands": [

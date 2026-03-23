@@ -25,7 +25,7 @@ User ──plain text──→ Core Agent ──structured request──→ Suba
 | `plan-terraform-workspace` | plan, check, drift, preview, dry-run | Create a Terraform plan run for a workspace |
 | `apply-terraform-run` | apply, deploy, execute, confirm, approve | Apply a planned Terraform run |
 | `init-terraform-code` | create, add, new, modify, change, update, provision, generate, init | Generate Terraform code for a change request |
-| `terraform-report` | report, summary, status, overview | Generate a Terraform workspace report *(not yet implemented)* |
+| `terraform-report` | report, summary, status, overview | Generate a TFE Test Report PDF |
 
 ---
 
@@ -182,5 +182,4 @@ environment:     dev
 | Missing workspace name | Ask user: "Which workspace?" |
 | Missing environment | Ask user: "Which environment? (dev, staging, prod)" |
 | Missing resource type for INIT_CODE | Ask user: "What resource do you want to create?" |
-| terraform-report requested | Inform user this skill is not yet implemented |
 | Subagent returns error | Relay the error to the user as-is |
